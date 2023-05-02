@@ -1,0 +1,185 @@
+/**
+*
+* Report Disapproved Products
+*
+* Creates a report indicating which products are disapproved, including the reason why and a way to fix it
+* Sends an alert via email whenever products are disapproved
+*
+* Version 1.0
+*
+* @author: Nils Rooijmans
+*
+* contact nils@nilsrooijmans.com for questions and the MCC version of the script 
+*/
+
+// CHANGE SETTINGS HERE
+
+var SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1PCtifxuysNFGvCLwbZzQlTHYtWD883zf4P4Y1KrjE3E/edit?usp=sharing";  //insert a new blank spreadsheet url between the double quotes
+var EMAIL = "okan@dgtlbase.com, karam@dgtlbase.com, karim@dgtlbase.com"; //insert your email adresses between the double quotes. You can add multiple email addresses between the double quotes, just separate them via a comma, ie: "john@doe.com, jane@doe.com"
+
+var MIN_CLICKS = 1;  // ignore products with less clicks during the date range specified via PERIOD, NOTE: minimum value is 1
+var PERIOD = 'LAST_30_DAYS'; 
+
+var GMC_ID = "142360128"; // insert Google Merchant Center id between double quotes. NOTE: the account you use to authorize this Google Ads script should also have access to the merchant center account associated with the id  
+
+var ACCOUNT_NAME = "Welhof NL"; // insert account name between double quotes. 
+
+
+// NO CHANGES NEEDED BELOW THIS LINE
+
+var SHEET_REPORT_HEADER = [
+    "Product ID",
+    "Product Title",
+    "Product Link",
+    "Clicks",
+    "Disapproval Reason",
+    "Solution",
+    "Documentation"
+  ];
+
+
+function main() {
+  
+  // first we clear the report sheet and add header
+  prepareSpreadsheet();  
+  
+  // let's get the products that are of interest
+  var productsOfInterest = getProductsOfInterest();
+  
+  // let's check for disapprovals among the products of interest
+  var disapprovedProducts = getDisapprovedProducts(productsOfInterest, GMC_ID);
+  
+  // finally, let's report on any issues
+  if (disapprovedProducts.length > 0) { // there is at least one issue
+    Logger.log("Total NR of Disapproved products: "+disapprovedProducts.length);
+    reportResults(disapprovedProducts);
+  }
+}
+
+
+function prepareSpreadsheet() {
+
+  var ss = SpreadsheetApp.openByUrl(SPREADSHEET_URL);
+  var sheet = ss.getActiveSheet();
+  sheet.clear(); //remove earlies alerts
+  sheet.clearConditionalFormatRules();
+  sheet.appendRow(SHEET_REPORT_HEADER);
+  
+  var range=sheet.getRange(1,1,1,SHEET_REPORT_HEADER.length);
+  range.setFontWeight("bold"); 
+}
+
+
+function getDisapprovedProducts(productsOfInterest, gmc_id) {
+  
+  var pageToken;
+  var maxResults = 250;
+  
+  var disapprovedProducts = [];
+
+  do {
+    
+    var productStatuses = ShoppingContent.Productstatuses.list(gmc_id, {pageToken: pageToken, maxResults: maxResults});
+    
+    if (productStatuses.resources) {
+      for (var i = 0; i < productStatuses.resources.length; i++) {
+        var product = productStatuses.resources[i];
+        
+        // productId's have the format like "productId" = "online:nl:NL:136258511"
+        var productId = product.productId.split(':').pop();
+        
+        if (productsOfInterest[productId] != null) {
+          //Logger.log("We've got a product of interest to check, \n  productId : "+productId+"\n  productTitle: "+productsOfInterest[productId].title+"\n  Nr of Clicks: "+productsOfInterest[productId].clicks);
+          for(j=0; j<product['destinationStatuses'].length;j++){
+            if (product['destinationStatuses'][j]['destination'] == "Shopping") { // only check Shopping ads
+              if (product['destinationStatuses'][j]['status'] == "disapproved") {
+                if(product['itemLevelIssues'] == undefined) {
+                  var reason = "Disapproval reason unknown";
+                }else{
+                  var reason = product['itemLevelIssues'][0].description;
+                  var solution = product['itemLevelIssues'][0].detail;
+                  var documentation = product['itemLevelIssues'][0].documentation;
+                }; 
+                Logger.log("- the product is disapproved, productId : "+productId+" reason: "+reason);
+
+                disapprovedProducts.push([
+                  product.productId.split(':').pop(), // productId's have the format like "productId" = "online:nl:NL:136258511"
+                  product.title,
+                  product.link,
+                  productsOfInterest[productId].clicks,
+                  reason,
+                  solution,
+                  documentation
+                ]);                
+              }
+            }
+          }
+        }
+        
+      }
+    } else {
+      Logger.log("No more products in account " + gmc_id);
+    }
+    pageToken = productStatuses.nextPageToken;
+  } while (pageToken);
+  
+  Logger.log("NR of disapproved products: "+disapprovedProducts.length);
+  
+  return disapprovedProducts;
+}
+
+
+function getProductsOfInterest() {
+
+  var productsOfInterest = {};
+  
+  var gaqlQuery = "SELECT segments.product_item_id, segments.product_title, metrics.clicks FROM shopping_performance_view WHERE metrics.clicks >= "+MIN_CLICKS+" AND segments.date DURING "+PERIOD;
+  
+  var results = AdsApp.search(gaqlQuery);
+  var count = 0;
+  
+  while (results.hasNext()) {
+    
+    var result = results.next();
+    
+    var productId = result.segments.productItemId;
+    var productTitle = result.segments.productTitle;
+    var nrOfClicks = result.metrics.clicks;
+    
+    productsOfInterest[productId] = {
+      id:productId,
+      title:productTitle,
+      clicks:nrOfClicks
+    };  
+    
+    count++;
+  }
+
+  Logger.log("NR of products of interest: "+count);
+  
+  return productsOfInterest;
+}
+
+
+function reportResults(results) {
+
+    var ss = SpreadsheetApp.openByUrl(SPREADSHEET_URL);
+    var sheet = ss.getActiveSheet();
+    var lastRow = sheet.getLastRow();
+
+    // write issues to sheet
+    var range = sheet.getRange(lastRow+1, 1, results.length, SHEET_REPORT_HEADER.length);
+    range.setValues(results);
+    range.sort([{column: 4, ascending: false}]);  
+  
+    // send the email
+    var emailBody = 
+      "Number of Disapproved products: " + results.length + "\n" + 
+      "See details: "+ SPREADSHEET_URL + "\n\n" +
+      "For more FREE Google Ads Scripts to improve your results and make your working day feel like a breeze, visit https://nilsrooijmans.com \n" + 
+      "---\n" + 
+      "This email is generated by a copy of the free Google Ads Script - Disapproved Products Alert, (C) Nils Rooijmans \n" +
+      "---\n";
+
+    MailApp.sendEmail(EMAIL, "[GOOGLE ADS ALERT] - Disapproved Products - "+ACCOUNT_NAME, emailBody);
+}
