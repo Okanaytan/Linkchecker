@@ -1,0 +1,353 @@
+/**
+ * @name AdWords Ad-extensions Disapproval Alerts Script
+ *
+ * @overview The script identifies any disapproved ad extensions in the AdWords
+ * account and sends an email to the given email ID with relevant details 
+ * about the ad-extension and disapproval reason provided by AdWords. 
+ *
+ * Please send in your comment, feedback, criticism or occasional Thank You 
+ * to support@karooya.com
+ * 
+ * @author Karooya Team [support@karooya.com]
+ * 
+ * All AdWords scripts published by Karooya are available here 
+ * http://www.karooya.com/blog/category/karooya-adwords-script/ 
+ *
+ * Copyright (c) 2017 - Karooya Technologies Pvt. Ltd.  All Rights Reserved.
+ * http://www.karooya.com
+ * 
+ * The script was last modified on: 29 April, 2019
+ * 
+ */
+
+
+/**
+ * Email recipient: Edit the following value to add your email ID(s). 
+ *  Example 'a@b.c' or 'a@b.c, x@y.z'
+ */
+var EMAIL_RECIPIENT = '<INSERT YOUR EMAIL ID HERE>';
+
+/*-- Filter for MCC account --*/
+//Is your account a MCC account
+var IS_MCC_ACCOUNT = false;
+
+var FILTER_ACCOUNTS_BY_LABEL = false;
+var ACCOUNT_LABEL_TO_SELECT = "INSERT_LABEL_NAME_HERE";
+
+var FILTER_ACCOUNTS_BY_IDS = false;
+var ACCOUNT_IDS_TO_SELECT = ['INSERT_ACCOUNT_ID_HERE', 'INSERT_ACCOUNT_ID_HERE'];
+/*---------------------------------*/
+
+//The script is expected to work with following API version
+var API_VERSION = {
+  apiVersion: 'v201809'
+}
+//////////////////////////////////////////////////////////////////////////////
+
+/**
+ * Types of ad extensions examined for approval status.
+ */
+var AdExtensionTypeID = {
+  SITELINKS_EXT:'1',
+  CALL_EXT:'2',
+  APP_EXT:'3',
+  LOCATION_EXT:'7',
+  CALLOUTS_EXT:'17',
+  STRUCTURED_SNIPPET_EXT: '24'
+};
+
+function main() {
+  if (!IS_MCC_ACCOUNT) {
+    processCurrentAccount();
+  } else {
+    var childAccounts  = getManagedAccounts();
+    while(childAccounts .hasNext()) {
+      var childAccount  = childAccounts .next()
+      MccApp.select(childAccount);
+      processCurrentAccount();
+    }
+  }
+  trackEventInAnalytics();
+}
+
+function getManagedAccounts() {
+  var accountSelector = MccApp.accounts();
+  if (FILTER_ACCOUNTS_BY_IDS) {
+    accountSelector = accountSelector.withIds(ACCOUNT_IDS_TO_SELECT);
+  }
+  if (FILTER_ACCOUNTS_BY_LABEL) {
+    accountSelector = accountSelector.withCondition("LabelNames CONTAINS '" + ACCOUNT_LABEL_TO_SELECT + "'")
+  }
+  return accountSelector.get();  
+}
+
+function processCurrentAccount() {
+  var result = searchDisapprovedAdExtensions();
+  if (result.total > 0) {
+    Logger.log("Found " + result.total + " disapproved ad extensions.")
+    sendEmail(EMAIL_RECIPIENT, result);
+  } else {
+    Logger.log("There are no disapproved ad extensions.")
+  }
+}
+
+function searchDisapprovedAdExtensions() {
+  Logger.log("Searching disapproved ad extensions...");
+  var result = {
+    total : 0,  // Total number of disapproved ad extensions
+    adExtensionsByType: {}
+  }
+
+  var query = "SELECT AccountDescriptiveName, FeedId, FeedItemId, " +
+    "PlaceholderType, ValidationDetails, DisapprovalShortNames, Status FROM  " + 
+    "PLACEHOLDER_FEED_ITEM_REPORT Where DisapprovalShortNames != '' AND Status=ENABLED AND " +
+    "PlaceholderType IN [1, 2, 3, 7, 17, 24]";
+
+  var report = AdWordsApp.report(query, API_VERSION);
+
+  Logger.log("AccountDescriptiveName,PlaceholderType,FeedID,FeedItemId,ValidationDetails,DisapprovalShortNames,Status");
+  var rows = report.rows();
+  while (rows.hasNext()) {
+    var row = rows.next();
+    Logger.log(row["AccountDescriptiveName"] + "," + row["PlaceholderType"] + "," +  
+        row["FeedId"] + "," + row["FeedItemId"] + "," + row["ValidationDetails"] +  "," + 
+        row["DisapprovalShortNames"] + "," + row["Status"]); 
+    addFeedItem(result, row);
+  }
+  return result;
+}
+
+function addFeedItem(result, row) {
+  result.total++;
+  var placeHolderTypeID = row["PlaceholderType"];
+  var adExtensionID = row["FeedItemId"];
+  var extension;
+
+  switch(placeHolderTypeID) {
+    case AdExtensionTypeID.SITELINKS_EXT:
+      extension = getAdExtension(AdWordsApp.extensions().sitelinks().withIds([adExtensionID]));
+      break;
+    case AdExtensionTypeID.CALL_EXT:
+      extension = getAdExtension(AdWordsApp.extensions().phoneNumbers().withIds([adExtensionID]));
+      break;
+    case AdExtensionTypeID.APP_EXT:
+      extension = getAdExtension(AdWordsApp.extensions().mobileApps().withIds([adExtensionID]));
+      break;
+    case AdExtensionTypeID.LOCATION_EXT:
+      extension = new Object(); // Dummay object
+      break;
+    case AdExtensionTypeID.REVIEWS_EXT:
+      extension = getAdExtension(AdWordsApp.extensions().reviews().withIds([adExtensionID]));
+      break;
+    case AdExtensionTypeID.CALLOUTS_EXT:
+      extension = getAdExtension(AdWordsApp.extensions().callouts().withIds([adExtensionID]));
+      break;
+  }
+
+  if (extension != null) {
+    var extensionsArr = result.adExtensionsByType[placeHolderTypeID];
+    if (extensionsArr == undefined) {
+      extensionsArr = new Array();
+      result.adExtensionsByType[placeHolderTypeID] = extensionsArr;
+    }
+    var arrElement = new Object();
+    arrElement.extension = extension;
+    arrElement.reason = row["DisapprovalShortNames"];
+    extensionsArr.push(arrElement);
+  }
+}
+
+function getAdExtension(adExtensionSelector) {
+  var extensionIterator =  adExtensionSelector.get();
+  if (extensionIterator.hasNext()) {
+    return extensionIterator.next();
+  }
+  return null;
+}
+
+function sendEmail(emailIDs, result) {
+  if (!emailIDs) {
+    Logger.log("Please provice recipient email IDs.");
+  } else {
+    Logger.log("Sending email..");
+  }
+
+  var accountID = AdWordsApp.currentAccount().getCustomerId();
+  var accountName = AdWordsApp.currentAccount().getName()
+  var subject = getSubjectLine(accountID, accountName);
+
+  var html = [];
+  html.push(
+    '<html>',
+      '<head></head>',
+      '<body>',
+        '<table style="font-family:Arial,Helvetica; border-collapse:collapse;font-size:10pt; ' +
+            'color:#444444; border: solid 1px #dddddd;" width="600" cellpadding=20>',
+          '<tr>', '<td>',
+            '<p>Hello,</p>',
+            '<p>Following ' + result.total + ' ad extensions got disapproved in your AdWords account. Please ' +  
+            'take corrective action such as updating or removing these extensions. If the disapproved extensions ' +
+            'stay in the account, you will continue to receive alerts for those extensions.</p>',
+            '<p><strong>AdWords Account ID: ' + accountID + '</strong><br/><strong>Account Name: ' + accountName + '</strong></p>',
+            addMessageForSiteLinkExtensions(result.adExtensionsByType[AdExtensionTypeID.SITELINKS_EXT]),
+            addMessageForCallExtensions(result.adExtensionsByType[AdExtensionTypeID.CALL_EXT]),
+            addMessageForAppExtensions(result.adExtensionsByType[AdExtensionTypeID.APP_EXT]),
+            addMessageForReviewExtensions(result.adExtensionsByType[AdExtensionTypeID.REVIEWS_EXT]),
+            addMessageForCalloutExtensions(result.adExtensionsByType[AdExtensionTypeID.CALLOUTS_EXT]),
+            addMessageForLocationExtensions(result.adExtensionsByType[AdExtensionTypeID.LOCATION_EXT]),
+            '<p>- AdWords script courtesy : <a href="www.karooya.com">Karooya</a></p>',
+          '</td>', '</tr>',
+        '</table>',
+      '</body>',
+    '</html>'
+  );
+
+  MailApp.sendEmail({
+    to: emailIDs,
+    subject: subject,
+    htmlBody: html.join('\n')
+  });
+}
+
+function getSubjectLine(accountID, accountName) {
+  var subject = "Found disapproved Ad extensions in AdWords account";
+  if (accountID) {
+    subject += " - "
+    if (accountName) {
+      subject += accountName.trim() + "(" + accountID + ")";
+    } else {
+      subject += "AccountID:"  + accountID;
+    }
+  }
+  return subject;
+}
+
+function getHtmlTable(tableTitle, columns, rows) {
+  var html = [];
+  html.push('<h3 style="margin-top:20px;">' + tableTitle + '</h3>');
+  html.push('<table style="width: 100%; border-collapse: collapse; border-spacing: 0;" cellpadding=5>', '<thead>', '<tr>');
+  for(var idx=0; idx < columns.length; idx++) {
+    html.push('<th style="background-color: #DDDDDD; vertical-align: bottom; text-align: left;' 
+        + (columns[idx].width?'width:' + columns[idx].width + ';"':'"') + '>' +  columns[idx].title + '</th>');
+  }
+  html.push('</tr>', '</thead>', '<tboday>');
+  for(var rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+    html.push('<tr>');
+    for(var colIdx = 0; colIdx < rows[rowIdx].length; colIdx++) {
+      html.push('<td style="vertical-align: top;">' + rows[rowIdx][colIdx] + '</td>');
+    }
+    html.push('</tr>');
+  }
+  html.push('</tboday>','</table>');
+  return html.join('\n');
+}
+
+function addMessageForReviewExtensions(adExtensions) {
+  if (!adExtensions) return "";
+
+  var tableTitle = "Review Extensions";
+  var tableColumns = [{title:'Review Text', width:'50%'}, {title:'Source Name', width:'10%'},
+                      {title:'Source URL', width:'10%'}, {title:'Disapproval Reason', width:'30%'}];
+
+  var tableRows = new Array();
+  for(var idx = 0; idx < adExtensions.length; idx++) {
+    tableRows.push([adExtensions[idx].extension.getText(), 
+                    adExtensions[idx].extension.getSourceName(),
+                    '<a href=' + adExtensions[idx].extension.getSourceUrl() + '>URL</a>', 
+                    adExtensions[idx].reason]);
+  }
+
+  return getHtmlTable(tableTitle, tableColumns, tableRows)
+}
+
+function addMessageForSiteLinkExtensions(adExtensions) {
+  if (!adExtensions) return "";
+
+  var tableTitle = "SiteLink Extensions";
+  var tableColumns = [{title:'SiteLink Text'}, {title:'Final URL'}, {title:'Disapproval Reason'}];
+
+  var tableRows = new Array();
+  for(var idx = 0; idx < adExtensions.length; idx++) {
+    tableRows.push([adExtensions[idx].extension.getLinkText(), 
+                    '<a href=' + adExtensions[idx].extension.urls().getFinalUrl() + '>URL</a>',
+                    adExtensions[idx].reason]);
+  }
+
+  return getHtmlTable(tableTitle, tableColumns, tableRows)
+}
+
+function addMessageForCallExtensions(adExtensions) {
+  if (!adExtensions) return "";
+
+  var tableTitle = "Call Extensions";
+  var tableColumns = [{title:'Phone Number'}, {title:'Disapproval Reason'}];
+
+  var tableRows = new Array();
+  for(var idx = 0; idx < adExtensions.length; idx++) {
+    tableRows.push([adExtensions[idx].extension.getPhoneNumber(), 
+                    adExtensions[idx].reason]);
+  }
+
+  return getHtmlTable(tableTitle, tableColumns, tableRows)
+}
+
+function addMessageForAppExtensions(adExtensions) {
+  if (!adExtensions) return "";
+
+  var tableTitle = "Mobile App Extensions";
+  var tableColumns = [{title:'App ID'}, {title:'Disapproval Reason'}];
+
+  var tableRows = new Array();
+  for(var idx = 0; idx < adExtensions.length; idx++) {
+    tableRows.push([adExtensions[idx].extension.getAppId(), 
+                    adExtensions[idx].reason]);
+  }
+
+  return getHtmlTable(tableTitle, tableColumns, tableRows)
+}
+
+function addMessageForCalloutExtensions(adExtensions) {
+  if (!adExtensions) return "";
+
+  var tableTitle = "Callout Extensions";
+  var tableColumns = [{title:'Callout Text'}, {title:'Disapproval Reason'}];
+
+  var tableRows = new Array();
+  for(var idx = 0; idx < adExtensions.length; idx++) {
+    tableRows.push([adExtensions[idx].extension.getText(), 
+                    adExtensions[idx].reason]);
+  }
+
+  return getHtmlTable(tableTitle, tableColumns, tableRows)
+}
+
+function addMessageForLocationExtensions(adExtensions) {
+  if (!adExtensions) return "";
+
+  var tableTitle = "Location Extensions";
+  var tableColumns = [{title:'Location'}, {title:'Disapproval Reason'}];
+
+  var tableRows = new Array();
+  for(var idx = 0; idx < adExtensions.length; idx++) {
+    tableRows.push(['Location_' + (idx+1), adExtensions[idx].reason]);
+  }
+
+  return getHtmlTable(tableTitle, tableColumns, tableRows)
+}
+
+/* ******************************************* */
+/* 
+* Tracks the execution of the script as an event in Google Analytics.
+* Sends the script name and a random UUID (it is just a random number, required by Analytics).
+* The event information just tells us that somewhere someone ran this script. 
+* Credit for the idea goes to Russel Savage, who posted his version at http://www.freeadwordsscripts.com/2013/11/track-adwords-script-runs-with-google.html.
+* and to Martin Roettgerding, as we learnt the trick from his script at http://www.ppc-epiphany.com/2016/03/11/introducing-the-quality-score-tracker-v3-0
+*/
+function trackEventInAnalytics() {
+  // Create the random UUID from 30 random hex numbers gets them into the format xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx (with y being 8, 9, a, or b).
+  var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, 
+    function(c) {var r = Math.random()*16|0,v=c=='x'?r:r&0x3|0x8;return v.toString(16);});
+  var url = "http://www.google-analytics.com/collect?v=1&t=event&tid=UA-46662882-1&cid=" + uuid 
+  + "&ec=AdWords%20Scripts&ea=Script%20Execution&el=AdExt%20Disapproval%20Alert";
+  UrlFetchApp.fetch(url);
+}
