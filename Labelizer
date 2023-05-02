@@ -1,0 +1,131 @@
+// Flowboost Labelizer 1.1 by Floris de Schrijver
+// custom requests? floris@floboost.nl
+
+// V1.1 - enter your data as variables 
+
+// make copy of the spreadsheet
+// add the spreadsheet URL as supplemental feed to Google merchant center (check cel H1 for custom_label_1, label or product type)
+
+// ------- make sure you register at https://library.florisdeschrijver.com for other free scripts, automation tips, how-to and much more (to come)
+
+// ------- updates will be uploaded in the library first 
+// -- v2.0 will be live at april 10 - 2023 > more settings and bucketing based on CPA
+
+// ------- Newsletters to check > 
+// -- Nils Rooijmans his PPC newsletter > https://nilsrooijmans.com/
+// -- PPC Edge newsletter > https://www.ppcmastery.com/blog/ 
+
+// what do the labels do?
+
+// over-index > an extra label for your very best products
+// - minimal 3x the clicks needed for one conversion on average 
+// - minimal your tROAS +1
+//
+// I use the over-index products to go to pMax first, if you don’t hit 50 conversions per 30 days per label I would suggest to go to pMax with both over-index as index together in one campaign
+//
+// index > your heroes
+// - minimal 1x the clicks needed for one conversion on average 
+// - minimal your tROAS
+//
+// near-index > products that almost hit your index thresholds
+// - minimal your tROAS - 1
+// - no click threshold
+// 
+// the near-index products can actually have a higher ROAS and profit due to a higher
+// conversion rate // but won’t have a ton of clicks
+// you can call them your question marks as well
+//
+// under-index > your bad performers
+// - maximum your tROAS - 1 
+//
+// no-index > few impressions
+// - maximum your impression threshold
+//
+// be aware: products with no impressions will not be added, create a separate campaign for those excluding all labels
+
+// -------
+
+// let it run daily, smooth sailing
+
+// -------
+
+// Spreadsheet link with product IDs
+
+var SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1AHPMy__XMFBtufgsc-RQWcktAjX2K_GZyy3nTUqprWI/copy";
+
+// Enter your data here >
+
+var breakevenRoas = 6.5; // your target ROAS
+var AverageCvr = 5; // conversion rate on average
+var impressionThreshold = 50; 
+var daysAgo = 90; 
+
+// Start script don't edit anything below here
+
+function main(){
+var products = getFilteredShoppingProducts(daysAgo);
+products.sort(function(a,b){return a[0] > b[0];});
+products = products.slice(0, 999999);
+pushToSpreadsheet(products);
+}
+
+function getFilteredShoppingProducts(daysAgo){
+var today = new Date();
+var daysAgo = new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysAgo);
+var dateFrom = Utilities.formatDate(daysAgo, AdWordsApp.currentAccount().getTimeZone(), 'yyyyMMdd');
+var dateTo = Utilities.formatDate(today, AdWordsApp.currentAccount().getTimeZone(), 'yyyyMMdd');
+  
+var query = 
+  
+    "SELECT OfferId, Impressions, Clicks, Ctr, Cost, Conversions, ConversionValue " +
+    "FROM SHOPPING_PERFORMANCE_REPORT " +
+    "DURING "+ dateFrom +","+ dateTo;
+  
+var products = [];
+var count = 0;
+var report = AdWordsApp.report(query);
+var rows = report.rows();
+while (rows.hasNext()){
+var row = rows.next();
+var offer_id = row['OfferId'];
+var impressions = row['Impressions'].toString();
+var clicks = row['Clicks'].toString();
+var cost = row['Cost'].toString();
+var conversions = row['Conversions'].toString();
+var conversionValue = row['ConversionValue'].toString();
+var convValuePerCost = (conversionValue.replace(",", "") / cost.replace(",", "")).toString();
+if (isNaN(convValuePerCost)){
+  convValuePerCost = 0;
+}
+    
+var isProductType = '';
+if (clicks > ( 300 / AverageCvr ) && convValuePerCost >= breakevenRoas + 1){
+  isProductType = 'over-index';
+} else if (clicks >= ( 100 / AverageCvr ) && convValuePerCost >= breakevenRoas ){
+  isProductType = 'index';
+} else if (convValuePerCost >= breakevenRoas - 1){
+  isProductType = 'near-index';  
+} else if (impressions < impressionThreshold){
+  isProductType = 'no-index';
+} else {
+  isProductType = 'under-index';
+}
+products.push([offer_id, impressions, clicks, cost, conversions, conversionValue, convValuePerCost, isProductType]);
+count+= 1;
+}
+Logger.log(count);
+return products;
+}
+
+function pushToSpreadsheet(data){
+var spreadsheet = SpreadsheetApp.openByUrl(SPREADSHEET_URL);
+var sheet = spreadsheet.getSheetByName('Flowbelizer');
+var lastRow = sheet.getMaxRows();
+sheet.getRange('A2:H'+lastRow).clearContent();
+var start_row=2;
+var endRow=start_row+data.length-1;
+var range = sheet.getRange('A'+start_row+':'+'H'+endRow);
+if (data.length>0){range.setValues(data);}
+return;
+}
+
