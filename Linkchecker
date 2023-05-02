@@ -1,0 +1,45 @@
+/**
+ * Configuration to be used for the Link Checker.
+ */
+
+CONFIG = {
+  // URL of the spreadsheet template.
+  // This should be a copy of
+  // https://docs.google.com/spreadsheets/d/1iO1iEGwlbe510qo3Li-j4KgyCeVSmodxU6J7M756ppk/copy.
+  // Make sure the sheet is owned by or shared with same Google user executing the script
+  'spreadsheet_url': 'YOUR_SPREADSHEET_URL',
+
+  // Array of addresses to be alerted via email if issues are found.
+  'recipient_emails': ['YOUR_EMAIL_HERE'],
+
+  // Label to use when a link has been checked.
+  'label': 'LinkChecker_Done',
+
+  // A list of ManagedAccountSelector conditions to restrict the population
+  // of child accounts that will be processed. Leave blank or comment out
+  // to include all child accounts.
+  'account_conditions': [],
+
+  // Number of seconds to sleep after each URL request. Use this throttle
+  // to reduce the load that the script imposes on your web server(s).
+  'throttle_seconds': 0,
+
+  // Number of seconds before timeout that the script should stop checking URLs
+  // to make sure it has time to output its findings.
+  'timeout_buffer_seconds': 120,
+
+  'advanced_options': {
+    /**
+     * Parameters controlling the script's behavior after hitting a UrlFetchApp
+     * QPS quota limit.
+     */
+    'quota_config': {
+      // Initial number of milliseconds to sleep.
+      'INIT_SLEEP_TIME_MILLIS': 250,
+      // Multiplicative factor to increase sleep time by on each retry.
+      'BACKOFF_FACTOR': 2,
+      // Maximum number of tries for a single URL.
+      'MAX_TRIES': 5
+    }
+  }
+};
