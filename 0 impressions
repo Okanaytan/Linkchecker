@@ -1,0 +1,215 @@
+// Copyright 2022. 
+// Free to use or alter for everyone. A mention would be nice ;-)
+//
+// Created By: Tibbe van Asten
+// for Adsscripts.com
+// 
+// Created: 23-08-2018
+// Last update: 23-05-2022 Added videocampaigns
+//
+// ABOUT THE SCRIPT
+// With this script you keep track of impressions in campaigns.
+// When a campaign didn't receive any impressions yesterday,
+// the script will send an email.
+//
+////////////////////////////////////////////////////////////////////
+
+var config = {
+  
+    LOG : false,
+    
+    EMAIL : "yourem@il.com",
+    EMAIL_INTRO : "The following campaigns have no impressions today!<br />",
+    EMAIL_SUBJECT : "WARNING: Campaigns without impressions",
+    
+    DATE_RANGE : "TODAY",
+    COMPARE : true,
+    COMPARE_DATERANGE : "LAST_7_DAYS",
+    ACCOUNT_LABEL : "Active",
+    
+    // Change this to true if you always want an email, 
+    // even if there are no campaigns without impressions.
+    SEND_MAIL : false
+  }
+  
+////////////////////////////////////////////////////////////////////
+  
+  function main() {
+    
+    var emailContent = config.EMAIL_INTRO;
+    
+    var accountIterator = MccApp
+        .accounts()
+        .withCondition("LabelNames CONTAINS '" + config.ACCOUNT_LABEL + "'")
+        .get();
+    
+    while(accountIterator.hasNext()){
+      var account = accountIterator.next();
+      MccApp.select(account);
+  
+      var campaignIterator = AdsApp
+          .campaigns()
+          .withCondition("Status = ENABLED")
+          .withCondition("Impressions = 0")
+          .withCondition("CampaignExperimentType = BASE")
+          .withCondition("ServingStatus = SERVING")
+          .forDateRange("TODAY")
+          .get();
+      
+            //Add accountname as heading in email
+          if(campaignIterator.hasNext()){
+            emailContent += "<br /><b>" + account.getName() + "</b><br />";
+            
+            if(config.LOG === true){
+              Logger.log("Account: " + account.getName());
+            }
+          }
+      
+      while(campaignIterator.hasNext()){
+        var campaign = campaignIterator.next(); 
+        
+        // Only add campaigns with > 0 impressions previous period
+        if(config.COMPARE === true){
+          
+          // Check for impressions previous period
+          if(campaign.getStatsFor(config.COMPARE_DATERANGE).getImpressions() > 0){
+  
+            if(config.LOG === true){
+              Logger.log("Campaign: " + campaign.getName());
+            }
+            config.SEND_MAIL = true;
+            emailContent += campaign.getName() + "<br />";
+            
+          }
+          
+        } // compare with previous period
+        else {
+          
+          if(config.LOG === true){
+            Logger.log("Campaign: " + campaign.getName());
+          }
+        
+          emailContent += campaign.getName() + "<br />";
+          
+        } 
+        
+      } // campaignIterator    
+      
+      var shoppingCampaignIterator = AdsApp
+        .shoppingCampaigns()
+        .withCondition("Status = ENABLED")
+        .withCondition("Impressions = 0")
+        .withCondition("CampaignExperimentType = BASE")
+        .withCondition("ServingStatus = SERVING")
+        .forDateRange("TODAY")
+        .get();
+      
+      //Add accountname as heading in email
+      if(shoppingCampaignIterator.hasNext() && !campaignIterator.hasNext()){
+        emailContent += "<br /><b>" + account.getName() + "</b><br />";
+        
+        if(config.LOG === true){
+          Logger.log("Account: " + account.getName());
+        }
+      }
+      
+      while(shoppingCampaignIterator.hasNext()){
+        var campaign = shoppingCampaignIterator.next();      
+  
+        // Only add campaigns with > 0 impressions previous period
+        if(config.COMPARE === true){
+          
+          // Check for impressions previous period
+          if(campaign.getStatsFor(config.COMPARE_DATERANGE).getImpressions() > 0){
+  
+            if(config.LOG === true){
+              Logger.log("Campaign: " + campaign.getName());
+            }
+            config.SEND_MAIL = true;
+            emailContent += campaign.getName() + "<br />";
+            
+          }
+          
+        } // compare with previous period
+        else {
+          
+          if(config.LOG === true){
+            Logger.log("Campaign: " + campaign.getName());
+          }
+        
+          emailContent += campaign.getName() + "<br />";
+          
+        } 
+        
+      } // shoppingCampaignIterator   
+      
+      var videoCampaignIterator = AdsApp
+        .videoCampaigns()
+        .withCondition("Status = ENABLED")
+        .withCondition("Impressions = 0")
+        .withCondition("CampaignExperimentType = BASE")
+        .withCondition("ServingStatus = SERVING")
+        .forDateRange("TODAY")
+        .get();
+
+      //Add accountname as heading in email
+      if(videoCampaignIterator.hasNext() && !campaignIterator.hasNext() && !shoppingCampaignIterator.hasNext()){
+        emailContent += emailContent += "<br /><b>" + account.getName() + "</b><br />";
+
+        if(config.LOG === true){
+          Logger.log("Account: " + account.getName());
+        }
+      }
+
+      while(videoCampaignIterator.hasNext()){
+        var campaign = videoCampaignIterator.next();
+
+        // Only add campaigns with > 0 impressions previous period
+        if(config.COMPARE === true){
+
+          // Check for impressions previous period
+          if(campaign.getStatsFor(config.COMPARE_DATERANGE).getImpressions() > 0){
+
+            if(config.LOG === true){
+              Logger.log("Campaign: " + campaign.getName());
+            }
+            
+            config.SEND_MAIL = true;
+            emailContent += campaign.getName() + "<br />";
+
+          }
+
+        } // compare with previous period
+        else {
+
+          if(config.LOG === true){
+            Logger.log("Campaign: " + campaign.getName());
+          }
+
+          emailContent += campaign.getName() + "<br />";
+
+        }
+
+      } // videoCampaignIterator
+      
+      if(config.LOG === true){
+        Logger.log("----");
+      }
+      
+    } // accountIterator
+    if(config.SEND_MAIL == true){
+        sendEmail(emailContent);
+        Logger.log(emailContent);
+    }
+    
+  } // function main
+  
+////////////////////////////////////////////////////////////////////
+  
+  function sendEmail(emailContent) {
+      MailApp.sendEmail({
+        to: config.EMAIL,
+        subject: config.EMAIL_SUBJECT,
+        htmlBody: emailContent
+      });
+  } // function sendEmail
